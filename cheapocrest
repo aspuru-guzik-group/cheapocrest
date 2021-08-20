@@ -1,0 +1,175 @@
+#!/usr/bin/perl
+use warnings;
+use strict;
+
+use Getopt::Long;
+my $nconfs = 10;
+my $forcefield = "uff";
+my $rescue = 1;
+my $help = 0;
+GetOptions (
+    "nconfs=i" => \$nconfs,
+    "ff=s"   => \$forcefield,
+    "rescue!" => \$rescue,
+    "help" => \$help,
+    )
+    or die("Error in command line arguments\n");
+
+if ($help) {
+    die
+q/Usage: cheapocrest [--help] [--ff FF] [--nconfs N] -- INPUT
+Generate conformers using obabel, then optimize and screen them with xtb.
+
+INPUT can be any file that can be read by openbabel, or alternatively a SMILES
+string.
+
+cheapocrest is basically a "cheap" version of xtb's CREST conformer generation
+routine, that additionally works on SMILES directly. It uses openbabel's
+genetic algorithm conformer generation to create the conformers and xtb +
+CREST to optimize, sort and select conformers.
+
+Options:
+
+    --help            print this error message and exit
+
+    --ff FF           use FF as the openbabel forcefield
+
+    --nconfs N        generate N openbabel conformers
+
+    --norescue        do not attempt the rescue protocol for failed openbabel
+                      generated structures (see below).
+
+Openbabel's 3d structure generation is not always successful, so this program
+contains a rescue protocol. When conformer generation fails, the failed
+initial structure is optimized using xtb GFN2 (without any bonding
+information) and conformer generation is attempted again from that optimized
+structure. This can sometime salvage molecules where FF optimization fails, at
+the cost of slightly longer run-time. If failure occurs a second time, the xtb
+structure is returned as the sole conformer.
+
+(C) Cyrille Lavigne [cyrille.lavigne@mail.utoronto.ca], 2020
+/;
+}
+
+
+
+# The smiles file is the last option. If the file INPUTSMILES doesn't exist,
+# we assume the SMILES string is what is passed instead.
+
+my $input;
+if (-e $ARGV[0]) {
+    $input = $ARGV[0];
+    # Generate a mol file from the input file
+    system("obabel",
+           $input,
+           "--gen3D","--ff", $forcefield,
+           "-O", "step1.mol");
+} else {
+    # die "SMILES passed but ./smiles already exists." if -e "smiles";
+    open(my $fh, ">", "smiles") or die "Can't write to smiles!";
+    print $fh $ARGV[0];
+    close($fh);
+    $input = "smiles";
+    system("obabel",
+           $input,
+           "--gen3D","--ff", $forcefield,
+           "-O", "step1.mol");
+}
+
+
+# Check if a molecule was generated at all. If it wasn't, its likely because
+# obabel determined the SMILES to be invalid.
+die "SMILES is invalid.\n" unless (-e "step1.mol") and !(-z "step1.mol");
+
+# Extract charge for xTB
+# ... this is done by converting to GAUSSIAN format and picking out the charge
+# from there.
+# TODO: also detect multiplicity?
+# TODO: do so in a less hacky fashion?
+my @chrg_uhf = `obabel step1.mol -o gjf`;
+foreach (@chrg_uhf) {
+    if (/([-+]?[0-9]+)\s+([0-9]+)/) {
+    `echo $1 > .CHRG`;
+    last;
+    }
+}
+
+# Now it may happen that the initial 3D file is so terribly generated that it
+# doesn't get minimized well enough in the --gen3d phase (which is only like
+# 200 steps). Here, we further minimize the structure to ensure that it its at
+# good enough for the conformer generation.
+system("obabel", "step1.mol", "--minimize",
+       "--ff", $forcefield,
+       "-O", "step2.mol");
+
+
+# Here we generate conformers using openbabel. We use a piped command so that
+# we can capture its output. We do so because a) its more stable than `` and
+# b) we need to check if obabel conformer generation fails (the filter error).
+# As obabel doesn't actually crash when its conformer generation routine is
+# bad, we have to check for failure ourselves.
+my @obabel_args  = ("step2.mol", "--conformer",
+                    "--nconf",$nconfs,
+                    "--ff",$forcefield,
+                    "--writeconformers", "-O", "conformers_obabel.xyz");
+open my $output, '-|' or
+    exec 'obabel', @obabel_args or die "obabel failed: $!\n";
+
+my $do_rescue = 0;
+while (<$output>) {
+    print;
+    if (/.*Initial conformer count: 0/) {
+        print("Conformers were not properly generated!\n");
+        $do_rescue = 1;
+    }
+};
+
+close $output or die "obabel failed to terminate.";
+
+
+if ($rescue and $do_rescue) {
+    print("Attempting rescue routine...\n");
+
+    mkdir "rescue" or die "Couldn't create directory rescue.";
+
+    # First convert to xyz to get rid of any broken bonding
+    system("obabel","step2.mol", "-O", "rescue/step2b.xyz");
+    system("cp", ".CHRG", "rescue/.CHRG");
+    system("cp", ".UHF", "rescue/.UHF");
+
+    # Then, optimize with xtb, which is not a force field and thus not bonding
+    # sensitive.
+    chdir("rescue");
+    system("xtb step2b.xyz --opt > xtb.out");
+    die("Could not converge rescue") unless (-e ".xtboptok");
+    chdir("..");
+
+    # Convert back to mol, hoping that the bonding is now properly detected etc.
+    system("obabel","rescue/xtbopt.xyz", "-O", "step2.mol");
+
+    # Try again
+    open my $output, '-|' or
+        exec 'obabel', @obabel_args or die "obabel failed: $!\n";
+
+    my $rescue_failed = 0;
+    while (<$output>) {
+        if (/.*Initial conformer count: 0/) {
+            # If conformer generation still fails but xtb converged fine, save
+            # the xtb structure as the sole conformer.
+            $rescue_failed = 1;
+        }
+    }
+
+
+    close $output or die "obabel failed to terminate.";
+    if ($rescue_failed) {
+        print("Conformers were not properly generated... again!\n");
+        system("cp", "rescue/xtbopt.xyz", "conformers_obabel.xyz");
+    }
+
+}
+
+
+
+# The final step is to xtb-optimize and screen the conformers using CREST,
+system("crest", "-screen", "conformers_obabel.xyz");
