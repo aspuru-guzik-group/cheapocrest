@@ -6,10 +6,14 @@ use Getopt::Long;
 my $nconfs = 10;
 my $forcefield = "uff";
 my $rescue = 1;
+my $chrg_manual = undef;
 my $help = 0;
+my $theory = "--gfnff";
 GetOptions (
     "nconfs=i" => \$nconfs,
     "ff=s"   => \$forcefield,
+    "chrg:i" => \$chrg_manual,
+    "theory=s" => \$theory,
     "rescue!" => \$rescue,
     "help" => \$help,
     )
@@ -17,7 +21,7 @@ GetOptions (
 
 if ($help) {
     die
-q/Usage: cheapocrest [--help] [--ff FF] [--nconfs N] -- INPUT
+q/Usage: cheapocrest [--help] [--ff FF] [--nconfs N] [--chrg C] [--theory <name>] -- INPUT
 Generate conformers using obabel, then optimize and screen them with xtb.
 
 INPUT can be any file that can be read by openbabel, or alternatively a SMILES
@@ -35,6 +39,11 @@ Options:
     --ff FF           use FF as the openbabel forcefield
 
     --nconfs N        generate N openbabel conformers
+
+    --chrg C          manually specify charge for crest screening (skip autodetect)
+
+    --theory <name>   specify level of theory for crest conformer evaluation
+                      (--gfnff or --gfn2)
 
     --norescue        do not attempt the rescue protocol for failed openbabel
                       generated structures (see below).
@@ -86,14 +95,19 @@ die "SMILES is invalid.\n" unless (-e "step1.mol") and !(-z "step1.mol");
 # from there.
 # TODO: also detect multiplicity?
 # TODO: do so in a less hacky fashion?
-my @chrg_uhf = `obabel step1.mol -o gjf`;
-foreach (@chrg_uhf) {
-    if (/([-+]?[0-9]+)\s+([0-9]+)/) {
-    `echo $1 > .CHRG`;
-    last;
+
+if (defined $chrg_manual && $chrg_manual ne '') {
+    `echo $chrg_manual > .CHRG`
+}
+else {
+    my @chrg_uhf = `obabel step1.mol -o gjf`;
+    foreach (@chrg_uhf) {
+        if (/([-+]?[0-9]+)\s+([0-9]+)/) {
+        `echo $1 > .CHRG`;
+        last;
+        }
     }
 }
-
 # Now it may happen that the initial 3D file is so terribly generated that it
 # doesn't get minimized well enough in the --gen3d phase (which is only like
 # 200 steps). Here, we further minimize the structure to ensure that it its at
@@ -172,4 +186,4 @@ if ($rescue and $do_rescue) {
 
 
 # The final step is to xtb-optimize and screen the conformers using CREST,
-system("crest", "-screen", "conformers_obabel.xyz");
+system("crest", $theory, "-screen", "conformers_obabel.xyz");
