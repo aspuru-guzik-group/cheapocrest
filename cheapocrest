@@ -21,7 +21,7 @@ GetOptions (
 
 if ($help) {
     die
-q/Usage: cheapocrest [--help] [--ff FF] [--nconfs N] [--chrg N] [--theory <name>] -- INPUT
+q/Usage: cheapocrest [--help] [--ff FF] [--nconfs N] [--chrg C] [--theory <name>] -- INPUT
 Generate conformers using obabel, then optimize and screen them with xtb.
 
 INPUT can be any file that can be read by openbabel, or alternatively a SMILES
@@ -40,7 +40,7 @@ Options:
 
     --nconfs N        generate N openbabel conformers
 
-    --chrg N          manually specify charge for crest screening (skip autodetect)
+    --chrg C          manually specify charge for crest screening (skip autodetect)
 
     --theory <name>   specify level of theory for crest conformer evaluation
                       (--gfnff or --gfn2)
