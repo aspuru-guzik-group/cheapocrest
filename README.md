@@ -15,18 +15,22 @@ are small).
 To generate conformers, use
 
 ```bash
-  cheapocrest [--ff FORCEFIELD] [--nconfs N] -- INPUTSMILES
+  cheapocrest [--ff FORCEFIELD] [--nconfs N] [--chrg C] [--theory
+  --gfn2/--gfnff] -- INPUTSMILES
 ```
 
 where `FORCEFIELD` is the openbabel forcefield used in the generation
 (defaults to UFF), `N` is the requested maximum number of conformers generated
-by openbabel (defaults to 10) and `INPUTSMILES` is either an input SMILES or a
-file containing an input SMILES. Currently the refinement steps always use
-GFN2.
+by openbabel (defaults to 10), `C` is the charge of your system  and `INPUTSMILES`
+is either an input SMILES or a file containing an input SMILES. The level of theory
+used in the refinement steps is controlled by the `--theory` argument, which can
+either be `--gfnff` or `--gfn2` (it is `--gfnff` by default).
 
 Note that `cheapocrest` works with charged molecules, and the SMILES-detected
 global  charge will be automatically stored into a ~.CHRG~ file for use
-with `xtb`.
+with `xtb`. If you manually specified a charge with `--chrg`, the automatic
+charge detection process is skipped and the value is written to a ~.CHRG~ file
+instead.
 
 This repo also contains an utility script `split_conformers` takes an xyz file
 containing multiple conformers as input and splits it into folders `conf-0`,
